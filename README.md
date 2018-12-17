@@ -9,8 +9,8 @@ There are many possible improvements that could be made -- this was a quick tool
 for a specific task. Displaying a legend in the charts was problematic without 
 major investment so the green dots (at the bottom) are "success" requests after 
 which that client terminates, while grey ones are "rate limited" requests. The 
-request dots are "stacked" one y unit high making the hight of the stack the rate 
-of requests for that 1-second bucket.
+request dots are "stacked" one y unit high making the hight of the stack the number 
+of requests serveed for that 1-second bucket.
 
 The main learning were:
 
