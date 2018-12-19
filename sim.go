@@ -22,6 +22,8 @@ type config struct {
 	RateLimit         float64
 	BurstLimitPerCent int
 	NClients          int
+	ProcessTime       time.Duration
+	WaitTime          time.Duration
 	MinBackoff        time.Duration
 	MaxBackoff        time.Duration
 	BackoffMult       float64
@@ -48,6 +50,8 @@ func main() {
 	flag.Float64Var(&cfg.RateLimit, "rate-limit", 50, "the rate per second to limit")
 	flag.IntVar(&cfg.BurstLimitPerCent, "burst-percent", 10, "the percent of rate limit allowed to burst above")
 	flag.IntVar(&cfg.NClients, "clients", 1000, "the number of clients")
+	flag.DurationVar(&cfg.ProcessTime, "process-time", 20*time.Millisecond, "the time each RPC takes to process if it's not rate limited")
+	flag.DurationVar(&cfg.WaitTime, "wait-time", 0, "the time each RPC will wait for a slot before rate limiting 0 to disable waiting")
 	flag.DurationVar(&cfg.MinBackoff, "min-backoff", time.Second, "the minimum backoff")
 	flag.DurationVar(&cfg.MaxBackoff, "max-backoff", 5*time.Minute, "the maximum base backoff (jitter still added)")
 	flag.Float64Var(&cfg.BackoffMult, "backoff-mult", 2, "the base of the exponent used for backoff")
@@ -240,8 +244,8 @@ func drawChart(start, end time.Time, points []*point, cfg config) {
 	}
 
 	graph := chart.Chart{
-		Title: fmt.Sprintf("Rate limit %.0f/s (%d%% burst), %d clients, %s",
-			cfg.RateLimit, cfg.BurstLimitPerCent, cfg.NClients, backoffDesc),
+		Title: fmt.Sprintf("Rate limit %.0f/s (%d%% burst, %s wait), %d clients, %s",
+			cfg.RateLimit, cfg.BurstLimitPerCent, cfg.WaitTime, cfg.NClients, backoffDesc),
 		TitleStyle: chart.StyleShow(),
 		Background: chart.Style{
 			Padding: chart.Box{
@@ -343,9 +347,26 @@ func server(ctx context.Context, cfg config) chan chan bool {
 		for {
 			select {
 			case respCh := <-ch:
-				// Apply rate limit and respond accordingly. It should be buffered so
-				// this shouldn't ever block.
-				respCh <- lim.Allow()
+				// Handle each request in it's own goroutine like a real server, esp.
+				// since we might be sleeping...
+				go func() {
+					// Apply rate limit and respond accordingly. It should be buffered so
+					// the chan send shouldn't ever block.
+					ok := false
+					if cfg.WaitTime > 0 {
+						waitCtx, cancel := context.WithTimeout(ctx, cfg.WaitTime)
+						if lim.Wait(waitCtx) == nil {
+							ok = true
+						}
+						cancel()
+					} else {
+						ok = lim.Allow()
+					}
+					if ok {
+						time.Sleep(cfg.ProcessTime)
+					}
+					respCh <- ok
+				}()
 			case <-ctx.Done():
 				return
 			}
